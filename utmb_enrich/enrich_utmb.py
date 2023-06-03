@@ -1,7 +1,10 @@
 import asyncio
+import contextlib
 import json
 from pathlib import Path
+from typing import Any
 
+import country_converter  # type: ignore[import]
 import flag
 import httpx
 import pandas as pd
@@ -56,31 +59,59 @@ async def enrich_utmb(participants: list) -> list:
     return participants
 
 
-def parse_participant_data(participants: list, race: str) -> list:
+def parse_participant_data(
+    fields: list[dict[str, Any]],
+    unstandard_countries: dict[str, str],
+    participants: list,
+    race: str,
+) -> list:
     parsed_results = []
+    name_fields = [
+        idx
+        for idx, field in enumerate(fields)
+        if "name" in field["Expression"].lower() and "nation" not in field["Expression"].lower()
+    ]
+    [gender_field] = [
+        idx for idx, field in enumerate(fields) if "gender" in field["Expression"].lower()
+    ]
+    [nationality_field] = [
+        idx for idx, field in enumerate(fields) if "nation" in field["Expression"].lower()
+    ]
+    bib_field = 0
+    country_conv = country_converter.CountryConverter()
     for participant in participants:
-        # nationality from flag image, e.g. "[img:https://timit.pro/events/graphics/flags/png/fr_black.png]"
-        if participant[4][-11:] == "_black.png]":
-            nationality = participant[4][-13:-11]
-        elif participant[5] == "TPE":
-            nationality = "tw"
-        else:
-            logger.warning("Unknown country code for {participant[4:6]}")
-            nationality = ""
-        parsed_results.append(
-            {
-                "name": participant[2],
-                "bib": participant[0],
-                "sex": participant[3],
-                "nationality": nationality,
-                "flag": flag.flag(nationality) if nationality else "🏳‍",
-                "race": race,
-            }
+        # Try to fix broken encoding (latin-1 encoding in utf-8 files)
+        for idx in range(1, len(participant)):
+            with contextlib.suppress(UnicodeDecodeError, UnicodeEncodeError):
+                participant[idx] = participant[idx].encode("latin-1").decode("utf-8")
+
+        input_country = unstandard_countries.get(
+            participant[nationality_field + 1], participant[nationality_field + 1]
         )
+        nationality = country_conv.convert(input_country, to="iso2")
+        country_name = country_conv.convert(input_country, to="name_short")
+        if nationality == "not found":
+            logger.warning(f"Unknown nationality {input_country=}")
+            logger.error(participant)
+            pretty_nationality = "🏳‍ (unknown)"
+        else:
+            pretty_nationality = f"{flag.flag(nationality)} ({country_name})"
+        res = {"name": " ".join([participant[idx + 1] for idx in name_fields])}
+        if bib_field is not None:
+            res["bib"] = participant[bib_field]
+        res |= {
+            "sex": participant[gender_field + 1].upper().replace("W", "F").replace("H", "F"),
+            "nationality": nationality,
+            "flag": pretty_nationality,
+            "race": race,
+        }
+        parsed_results.append(res)
     return parsed_results
 
 
 def write_to_file(participants: list, filename: str, drop_columns: list[str]) -> None:
+    if not participants:
+        return
     participants.sort(key=lambda p: (-p.get("utmb_index", 0), p.get("name")))
     enhanced_df = pd.DataFrame(participants).drop(columns=drop_columns)
     enhanced_df.to_csv(DATADIR / f"{filename}.csv", index=False)
@@ -90,14 +121,26 @@ def write_to_file(participants: list, filename: str, drop_columns: list[str]) ->
 
 def main() -> None:
     logger.info("Enriching Runners via UTMB website")
-    with (DATADIR / "runners.json").open() as fin:
+    with (DATADIR / "runners.json").open(encoding="utf-8") as fin:
         dat = json.load(fin)
+
+    with (DATADIR / "unstandard_countries.json").open(encoding="utf-8") as fin:
+        unstandard_countries = json.load(fin)
+    with (DATADIR / "unstandard_fifa_country_codes.json").open(encoding="utf-8") as fin:
+        fifa_codes = json.load(fin)
+        for elem in fifa_codes:
+            unstandard_countries[elem["fifa"]] = elem["id"]
 
     races = dat["data"]
     all_participants = []
     pbar = tqdm(total=len(races) * 2)
     for race_name, orig_participants in races.items():
-        participants = parse_participant_data(orig_participants, race=race_name)
+        participants = parse_participant_data(
+            fields=dat["list"]["Fields"],
+            unstandard_countries=unstandard_countries,
+            participants=orig_participants,
+            race=race_name,
+        )
         for sex in ("M", "F"):
             participants_gender = [p for p in participants if p["sex"] == sex]
             participants_gender = asyncio.new_event_loop().run_until_complete(

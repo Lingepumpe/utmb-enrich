@@ -145,6 +145,25 @@ files = [
 ]
 
 [[package]]
+name = "country-converter"
+version = "1.0.0"
+description = "The country converter (coco) - a Python package for converting country names between different classifications schemes"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "country_converter-1.0.0-py3-none-any.whl", hash = "sha256:28e89080b3da6d5463ef4761a52f9839a131e469ce4eafd40c91ef367530681e"},
+    {file = "country_converter-1.0.0.tar.gz", hash = "sha256:5a75dab296d79bf59b3ea836b0637b746821e5ad8444be465cda2472f2a17edb"},
+]
+
+[package.dependencies]
+pandas = ">=1.0"
+
+[package.extras]
+dev = ["country-converter[lint,test]"]
+lint = ["black (>=22.3.0)", "isort (>=5.5.2)"]
+test = ["coveralls", "pytest (>=5.4.0)", "pytest-black", "pytest-cov (>=2.7.0)", "pytest-datadir", "pytest-mypy"]
+
+[[package]]
 name = "decorator"
 version = "5.1.1"
 description = "Decorators for Humans"
@@ -962,4 +981,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.12"
-content-hash = "46ab7cf609c0773acd4b8fc027768cbed27c3f23bba1def3e7da07eead038cad"
+content-hash = "34b4879388c1e1c859fe65ce57e8e53c27fcebdfb70f1e1d045b38d714d8d7ea"

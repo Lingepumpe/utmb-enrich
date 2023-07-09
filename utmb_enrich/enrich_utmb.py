@@ -72,7 +72,9 @@ def parse_participant_data(
         if "name" in field["Expression"].lower() and "nation" not in field["Expression"].lower()
     ]
     [gender_field] = [
-        idx for idx, field in enumerate(fields) if "gender" in field["Expression"].lower()
+        idx
+        for idx, field in enumerate(fields)
+        if "gender" in field["Expression"].lower() or "geschlecht" in field["Expression"].lower()
     ]
     [nationality_field] = [
         idx for idx, field in enumerate(fields) if "nation" in field["Expression"].lower()

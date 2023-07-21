@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +29,11 @@ async def enrich_utmb(participants: list) -> list:
     async with httpx.AsyncClient() as client, asyncio.TaskGroup() as tg:
         for participant in participants:
             sex = "F" if participant["sex"] == "F" else "H"  # french api O_o
-            nationality = participant["nationality"]
+            nationality_option = ""
+            if (nationality := participant["nationality"]) != "not found":
+                nationality_option = f"&nationality={nationality}"
             names = participant["name"].replace(" ", "+")
-            url = rf"https://api.utmb.world/search/runners?category=general&sex={sex}&ageGroup=&nationality={nationality}&limit=1&offset=0&search={names}"
+            url = rf"https://api.utmb.world/search/runners?category=general&sex={sex}&ageGroup={nationality_option}&limit=1&offset=0&search={names}"
             tasks.append(tg.create_task(get_from_utmb(client=client, url=url)))
     for participant, task in zip(participants, tasks, strict=True):
         result = task.result().json()
@@ -62,7 +65,7 @@ async def enrich_utmb(participants: list) -> list:
 def parse_participant_data(
     fields: list[dict[str, Any]],
     unstandard_countries: dict[str, str],
-    participants: list,
+    participants: list | dict[str, list],
     race: str,
 ) -> list:
     parsed_results = []
@@ -76,25 +79,31 @@ def parse_participant_data(
         for idx, field in enumerate(fields)
         if "gender" in field["Expression"].lower() or "geschlecht" in field["Expression"].lower()
     ]
-    [nationality_field] = [
+    nationality_fields = [
         idx for idx, field in enumerate(fields) if "nation" in field["Expression"].lower()
     ]
     bib_field = 0
     country_conv = country_converter.CountryConverter()
+    if isinstance(participants, dict):  # there is annother layer
+        participants = list(chain.from_iterable(sublist for sublist in participants.values()))
     for participant in participants:
         # Try to fix broken encoding (latin-1 encoding in utf-8 files)
         for idx in range(1, len(participant)):
             with contextlib.suppress(UnicodeDecodeError, UnicodeEncodeError):
                 participant[idx] = participant[idx].encode("latin-1").decode("utf-8")
 
-        input_country = unstandard_countries.get(
-            participant[nationality_field + 1], participant[nationality_field + 1]
-        )
-        nationality = country_conv.convert(input_country, to="iso2")
-        country_name = country_conv.convert(input_country, to="name_short")
+        if len(nationality_fields) > 0:
+            [nationality_field] = nationality_fields
+            input_country = unstandard_countries.get(
+                participant[nationality_field + 1], participant[nationality_field + 1]
+            )
+            nationality = country_conv.convert(input_country, to="iso2")
+            country_name = country_conv.convert(input_country, to="name_short")
+        else:
+            nationality = "not found"
+            input_country = "not found"
         if nationality == "not found":
             logger.warning(f"Unknown nationality {input_country=}")
-            logger.error(participant)
             pretty_nationality = "🏳‍ (unknown)"
         else:
             pretty_nationality = f"{flag.flag(nationality)} ({country_name})"
